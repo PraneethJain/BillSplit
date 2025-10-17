@@ -2,7 +2,13 @@
 
 import json
 from decimal import Decimal, InvalidOperation
-import subprocess # Import subprocess for running external commands
+import subprocess  # Import subprocess for running external commands
+from PIL import Image, ImageOps  # For image handling and preprocessing
+import os  # For file operations
+from PyQt6.QtWidgets import QApplication, QFileDialog  # Replace tkinter imports
+import pytesseract  # For OCR
+import cv2  # OpenCV for advanced image preprocessing
+import numpy as np  # For array manipulations
 
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll, Horizontal
@@ -93,12 +99,14 @@ class BillSplitterApp(App):
             VerticalScroll(id="people_list"),
             Button("Add Person", id="add_person", variant='primary'),
             Input(placeholder="Other charges (e.g., 15/2)", id="other_charges"),
+            Button("Upload Bill Image", id="upload_image", variant="primary"),
+            Static(id="uploaded_image_preview"),  # Placeholder for image preview
             # Wrap Calculate and Share buttons in a Horizontal container
             # Added a class "action-buttons-row" for more specific CSS targeting
             Horizontal(
                 Button("Calculate", variant="primary", id="calculate", classes="action-button"),
                 Button("Share", variant="success", id="share", classes="action-button"),
-                classes="action-buttons-row" # Use a class for this Horizontal container
+                classes="action-buttons-row"  # Use a class for this Horizontal container
             ),
             Static(id="results"),
             id="main_container",
@@ -130,8 +138,10 @@ class BillSplitterApp(App):
             self.calculate_split()
         elif event.button.id == "add_person":
             self.action_add_person()
-        elif event.button.id == "share": # Handle the new share button
+        elif event.button.id == "share":  # Handle the new share button
             self.action_share_results()
+        elif event.button.id == "upload_image":
+            self.action_upload_image()
 
     def action_add_person(self) -> None:
         current_people = {inp.border_title for inp in self.query(PersonInput)}
@@ -226,6 +236,48 @@ class BillSplitterApp(App):
                 self.notify(f"An unexpected error occurred: {e}", severity="error")
         else:
             self.notify("Nothing to share yet. Calculate the bill first!", severity="warning")
+
+    def action_upload_image(self) -> None:
+        """Handles uploading, preprocessing, performing OCR, and displaying the bill image."""
+        try:
+            # Open a file dialog to select an image
+            app = QApplication([])  # Create a QApplication instance
+            file_path, _ = QFileDialog.getOpenFileName(
+                None,
+                "Select Bill Image",
+                "",
+                "Image Files (*.png *.jpg *.jpeg *.bmp *.gif)"
+            )
+            app.quit()  # Close the QApplication instance
+
+            if not file_path:  # If no file is selected
+                self.notify("No file selected.", severity="warning")
+                return
+
+            image = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
+
+            # Preprocess the image
+            # 1. Apply thresholding to make text stand out
+            _, image = cv2.threshold(image, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
+            # 2. Apply dilation to connect broken text
+            kernel = np.ones((2, 2), np.uint8)
+            image = cv2.dilate(image, kernel, iterations=1)
+
+            image = cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_LINEAR)
+
+            # Perform OCR with table recognition mode
+            config = "--psm 6"  # Assume a single uniform block of text
+            extracted_text = pytesseract.image_to_string(image, config=config)
+
+            # Update the UI with the extracted text (if required for debugging)
+            # self.query_one("#uploaded_image_preview", Static).update(
+            #     f"[bold]Uploaded Image:[/bold]\n{file_path}\n\n"
+            #     f"[bold]Extracted Text:[/bold]\n{extracted_text}"
+            # )
+            self.notify("Image uploaded and OCR completed successfully!", severity="success")
+        except Exception as e:
+            self.notify(f"Error uploading or processing image: {e}", severity="error")
 
     def action_toggle_dark(self) -> None:
         self.dark = not self.dark
