@@ -7,48 +7,57 @@ import subprocess # Import subprocess for running external commands
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll, Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Button, Header, Footer, Input, Static, Label, SelectionList
+from textual.widgets import Button, Header, Footer, Input, Static, Label, SelectionList, ListView, ListItem
 from textual.widgets.selection_list import Selection
 from textual.message import Message
 from textual.widget import Widget
+from textual.reactive import reactive
+from textual.validation import Number
 
 # Import the business logic functions
 import logic
 
 
-# --- NEW WIDGET FOR PERSON INPUT (Unchanged) ---
-class PersonInput(Widget):
-    """A widget containing a person's name, input, and a remove button."""
+# --- NEW WIDGETS ---
+class PersonControl(Static):
+    """A widget to control a person's share of an item."""
 
-    class Remove(Message):
-        """Message posted when the remove button is clicked."""
-
-        def __init__(self, to_remove: Widget) -> None:
-            self.to_remove = to_remove
-            super().__init__()
-
-    def __init__(self, name: str, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.person_name = name
-        self.input = Input(placeholder="0.00")
+    def __init__(self, person_name: str) -> None:
+        super().__init__(id=f"ctrl-{person_name}")
+        self.person_name = person_name
+        self.count = 0
 
     def compose(self) -> ComposeResult:
-        with Horizontal():
-            yield self.input
-            yield Button("✕", variant="error", classes="remove-button")
+        yield Button(self.person_name, id="btn-add", classes="add-btn")
+        yield Button("-", id="btn-sub", classes="sub-btn")
+        yield Button("x", id="btn-remove-person", classes="remove-person-btn", variant="error")
 
-    def on_mount(self) -> None:
-        self.border_title = self.person_name
+    def update_count(self, count: int) -> None:
+        self.count = count
+        add_btn = self.query_one("#btn-add", Button)
+        sub_btn = self.query_one("#btn-sub", Button)
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.post_message(self.Remove(self))
+        if count > 0:
+            add_btn.label = f"{self.person_name} ({count})"
+            add_btn.variant = "success"
+            sub_btn.variant = "error"
+        else:
+            add_btn.label = self.person_name
+            add_btn.variant = "default"
+            sub_btn.variant = "default"
 
-    @property
-    def value(self) -> str:
-        return self.query_one(Input).value
 
-    def focus_input(self) -> None:
-        self.input.focus()
+class BillItemRow(Static):
+    """A widget for a single item in the bill."""
+
+    def __init__(self, name: str, price: float, item_id: str) -> None:
+        super().__init__()
+        self.display_text = f"{name} (${price:.2f})"
+        self.item_id = item_id
+
+    def compose(self) -> ComposeResult:
+        yield Label(self.display_text, classes="item-label")
+        yield Button("x", id=f"del-{self.item_id}", classes="btn-del-row", variant="error")
 
 
 # --- MODAL SCREEN (Unchanged) ---
@@ -82,32 +91,48 @@ class BillSplitterApp(App):
         ("escape", "dismiss_modal", "Dismiss Modal"),
     ]
 
+    selected_item_id = reactive(None)
+    allocations = reactive({})
+    item_prices = {}
+    id_counter = 0
+
     def __init__(self):
         self.all_people = []
         super().__init__()
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield VerticalScroll(
-            Label("Enter amounts for each person:"),
-            VerticalScroll(id="people_list"),
-            Button("Add Person", id="add_person", variant='primary'),
-            Input(placeholder="Other charges (e.g., 15/2)", id="other_charges"),
-            # Wrap Calculate and Share buttons in a Horizontal container
-            # Added a class "action-buttons-row" for more specific CSS targeting
-            Horizontal(
-                Button("Calculate", variant="primary", id="calculate", classes="action-button"),
-                Button("Share", variant="success", id="share", classes="action-button"),
-                classes="action-buttons-row" # Use a class for this Horizontal container
-            ),
-            Static(id="results"),
-            id="main_container",
+        with Vertical(id="main-container"):
+            # TOP: People
+            with Vertical(id="left-pane-content"):
+                with VerticalScroll(id="people_list"):
+                    pass # People will be added here
+                yield Button("Add Person", id="add_person", variant='primary')
+
+            # BOTTOM: Items
+            with Vertical(id="right-pane"):
+                yield ListView(id="item-list")
+                with Horizontal(id="input-row"):
+                    yield Input(placeholder="Item Name", id="input-name")
+                    yield Input(placeholder="$$", id="input-price", validators=[Number(minimum=0.0)])
+                    yield Button("+", id="btn-create")
+        
+        # Bottom Bar
+        yield Input(placeholder="Other charges (e.g., 15/2)", id="other_charges")
+        yield Horizontal(
+            Button("Calculate", variant="primary", id="calculate", classes="action-button"),
+            Button("Share", variant="success", id="share", classes="action-button"),
+            classes="action-buttons-row"
         )
+        yield Static(id="results")
         yield Footer()
 
     def on_mount(self) -> None:
         try:
             self.all_people = logic.load_people_from_file("people.json")
+            people_list = self.query_one("#people_list")
+            for person in self.all_people:
+                people_list.mount(PersonControl(person))
         except FileNotFoundError:
             self.query_one("#results").update(
                 "[bold red]Error: people.json not found.[/bold red]"
@@ -116,6 +141,19 @@ class BillSplitterApp(App):
             self.query_one("#results").update(
                 "[bold red]Error: Could not decode people.json.[/bold red]"
             )
+
+    def create_item(self, name: str, price: float) -> None:
+        self.id_counter += 1
+        new_id = f"item-{self.id_counter}"
+        
+        self.item_prices[new_id] = price
+        self.allocations[new_id] = {p: 0 for p in self.all_people}
+        
+        list_view = self.query_one("#item-list", ListView)
+        
+        row_widget = BillItemRow(name, price, new_id)
+        
+        list_view.append(ListItem(row_widget, id=new_id))
 
     def _safe_eval_with_notify(self, expression: str) -> Decimal:
         """UI-aware wrapper for safe_decimal_eval that notifies on error."""
@@ -126,16 +164,97 @@ class BillSplitterApp(App):
             return Decimal(0)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        btn_id = event.button.id
+
+        if "del-" in str(btn_id):
+            item_id_to_delete = str(btn_id).replace("del-", "")
+            
+            self.allocations.pop(item_id_to_delete, None)
+            self.item_prices.pop(item_id_to_delete, None)
+
+            list_view = self.query_one("#item-list", ListView)
+            try:
+                list_view.get_child_by_id(item_id_to_delete).remove()
+            except:
+                pass
+
+            if self.selected_item_id == item_id_to_delete:
+                self.selected_item_id = None
+                self.refresh_people_ui()
+            
+            event.stop()
+            return
+
+        if btn_id == "btn-create":
+            name_inp = self.query_one("#input-name", Input)
+            price_inp = self.query_one("#input-price", Input)
+            
+            if not name_inp.value or not price_inp.value:
+                self.notify("Enter name and price", severity="error")
+                return
+            
+            if not price_inp.is_valid:
+                self.notify("Invalid price", severity="error")
+                return
+
+            self.create_item(name_inp.value, float(price_inp.value))
+            
+            name_inp.value = ""
+            price_inp.value = ""
+            name_inp.focus()
+            return
+
+        control = event.button.parent
+        if isinstance(control, PersonControl):
+            person = control.person_name
+            if btn_id == "btn-remove-person":
+                self.all_people.remove(person)
+                for item_id in self.allocations:
+                    if person in self.allocations[item_id]:
+                        del self.allocations[item_id][person]
+                
+                control.remove()
+                self.notify(f"Removed {person}")
+                return
+
+            if not self.selected_item_id:
+                self.notify("Select an item first!", severity="warning")
+                return
+
+            if btn_id == "btn-add":
+                self.allocations[self.selected_item_id][person] += 1
+            elif btn_id == "btn-sub":
+                if self.allocations[self.selected_item_id][person] > 0:
+                    self.allocations[self.selected_item_id][person] -= 1
+            
+            self.refresh_people_ui()
+
         if event.button.id == "calculate":
             self.calculate_split()
         elif event.button.id == "add_person":
             self.action_add_person()
-        elif event.button.id == "share": # Handle the new share button
+        elif event.button.id == "share":
             self.action_share_results()
 
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.item:
+            self.selected_item_id = event.item.id
+            self.refresh_people_ui()
+
+    def refresh_people_ui(self) -> None:
+        if not self.selected_item_id:
+            for p in self.all_people:
+                self.query_one(f"#ctrl-{p}", PersonControl).update_count(0)
+            return
+        
+        counts = self.allocations[self.selected_item_id]
+        for p in self.all_people:
+            self.query_one(f"#ctrl-{p}", PersonControl).update_count(counts[p])
+
     def action_add_person(self) -> None:
-        current_people = {inp.border_title for inp in self.query(PersonInput)}
-        available_people = [p for p in self.all_people if p not in current_people]
+        current_people = {p.person_name for p in self.query(PersonControl)}
+        all_people_from_file = logic.load_people_from_file("people.json")
+        available_people = [p for p in all_people_from_file if p not in current_people]
 
         if not available_people:
             self.query_one("#results").update(
@@ -146,62 +265,50 @@ class BillSplitterApp(App):
         def add_people_callback(people_names: list[str]) -> None:
             if people_names:
                 people_list = self.query_one("#people_list")
-                last_input = None
                 for name in people_names:
-                    person_widget = PersonInput(name=name)
+                    person_widget = PersonControl(person_name=name)
                     people_list.mount(person_widget)
-                    last_input = person_widget
-                if last_input:
-                    last_input.focus_input()
+                    self.all_people.append(name)
+                
+                # Add the new people to the allocations for each item
+                for item_id in self.allocations:
+                    for name in people_names:
+                        self.allocations[item_id][name] = 0
+
 
         self.push_screen(SelectPersonScreen(available_people), add_people_callback)
 
-    def on_person_input_remove(self, message: PersonInput.Remove) -> None:
-        message.to_remove.remove()
-        self.query_one("#results").update("Person removed.")
-
     def calculate_split(self) -> None:
         results_widget = self.query_one("#results")
-        try:
-            # 1. Gather data from UI widgets
-            person_widgets = self.query(PersonInput)
-            person_amounts = [
-                (w.border_title, self._safe_eval_with_notify(w.value))
-                for w in person_widgets
-            ]
-            other_charges_input = self.query_one("#other_charges", Input)
-            other_charges = self._safe_eval_with_notify(other_charges_input.value)
+        
+        other_charges_input = self.query_one("#other_charges", Input)
+        other_charges = self._safe_eval_with_notify(other_charges_input.value)
+        
+        result = logic.calculate_split_from_items(
+            self.item_prices, self.allocations, self.all_people, other_charges
+        )
+        
+        if not result:
+            results_widget.update("Nothing to calculate.")
+            return
 
-            # 2. Call the business logic function
-            result = logic.calculate_split_bill(person_amounts, other_charges)
-
-            # 3. Format and display the result from the logic function
-            if not result:
-                results_widget.update("Nothing to calculate.")
-                return
-
-            if result.get("is_equal_split"):
-                output = (
-                    f"[bold]Total: {result['grand_total']:.2f}[/bold]\n\n"
-                    f"[bold]Final amounts (charges split equally):[/bold]\n"
-                )
-                for name, amount in result["final_amounts"]:
-                    output += f"{name}: {amount:.2f}\n"
-            else:
-                output = (
-                    f"[bold]Subtotal: {result['subtotal']:.2f}\n"
-                    f"Grand Total: {result['grand_total']:.2f}[/bold]\n\n"
-                    f"[bold]Final amounts per person:[/bold]\n"
-                )
-                for name, amount in result["final_amounts"]:
-                    output += f"{name}: {amount:.2f}\n"
-
-            results_widget.update(output)
-
-        except InvalidOperation:
-            results_widget.update(
-                "[bold red]Error: Invalid number or expression.[/bold red]"
+        if result.get("is_equal_split"):
+            output = (
+                f"[bold]Total: {result['grand_total']:.2f}[/bold]\n\n"
+                f"[bold]Final amounts (charges split equally):[/bold]\n"
             )
+            for name, amount in result["final_amounts"]:
+                output += f"{name}: {amount:.2f}\n"
+        else:
+            output = (
+                f"[bold]Subtotal: {result['subtotal']:.2f}\n"
+                f"Grand Total: {result['grand_total']:.2f}[/bold]\n\n"
+                f"[bold]Final amounts per person:[/bold]\n"
+            )
+            for name, amount in result["final_amounts"]:
+                output += f"{name}: {amount:.2f}\n"
+
+        results_widget.update(output)
 
     def action_share_results(self) -> None:
         """Shares the content of the results widget using termux-share."""

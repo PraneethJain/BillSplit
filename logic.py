@@ -34,22 +34,78 @@ def load_people_from_file(filepath: str) -> List[str]:
         return json.load(f)
 
 
+def calculate_split_from_items(
+    item_prices: Dict[str, float],
+    allocations: Dict[str, Dict[str, int]],
+    all_people: List[str],
+    other_charges: Decimal,
+) -> Dict:
+    """
+    Performs the bill splitting calculation from itemized data.
+    """
+    person_totals = {p: Decimal(0) for p in all_people}
+
+    for item_id, item_allocations in allocations.items():
+        total_shares = sum(item_allocations.values())
+        if total_shares == 0:
+            continue
+
+        price = Decimal(item_prices[item_id])
+        cost_per_share = price / Decimal(total_shares)
+
+        for person, share in item_allocations.items():
+            if share > 0:
+                person_totals[person] += cost_per_share * Decimal(share)
+
+    subtotal = sum(person_totals.values())
+
+    if subtotal == 0:
+        if other_charges > 0:
+            num_people = len(all_people)
+            if num_people > 0:
+                split_other_charges = other_charges / num_people
+                final_amounts = {p: split_other_charges for p in all_people}
+                is_equal_split = True
+            else:
+                final_amounts = {}
+                is_equal_split = False
+        else:
+            return {}
+    else:
+        final_amounts = {p: person_totals[p] for p in all_people}
+        is_equal_split = False
+        if other_charges > 0:
+            for person, total in person_totals.items():
+                weight = total / subtotal
+                final_amounts[person] += other_charges * Decimal(weight)
+
+    grand_total = subtotal + other_charges
+
+    return {
+        "subtotal": subtotal,
+        "grand_total": grand_total,
+        "final_amounts": list(final_amounts.items()),
+        "is_equal_split": is_equal_split,
+    }
+
+
 def calculate_split_bill(
     person_amounts: List[Tuple[str, Decimal]], other_charges: Decimal
 ) -> Dict:
     """
     Performs the bill splitting calculation.
-
-    Args:
-        person_amounts: A list of tuples, where each tuple is (person_name, amount).
-        other_charges: Additional charges to be split.
-
-    Returns:
-        A dictionary containing the calculation results.
+    (Now a wrapper for calculate_split_from_items for compatibility)
     """
-    amounts = [amount for _, amount in person_amounts]
-    total = sum(amounts)
+    all_people = [name for name, _ in person_amounts]
+    item_prices = {f"item_{i}": amount for i, (_, amount) in enumerate(person_amounts)}
+    allocations = {
+        f"item_{i}": {name: 1 if amount > 0 else 0 for name, amount in person_amounts}
+        for i in range(len(person_amounts))
+    }
 
+    # This is a simplified adaptation. The core logic is now in calculate_split_from_items.
+    # The original logic for equal splitting when total is 0 is preserved.
+    total = sum(amount for _, amount in person_amounts)
     if total == 0:
         if other_charges > 0 and person_amounts:
             num_people = len(person_amounts)
@@ -62,17 +118,6 @@ def calculate_split_bill(
                 "is_equal_split": True,
             }
         else:
-            return {}  # Signifies nothing to calculate
+            return {}
 
-    weights = [x / total for x in amounts]
-    final_amounts = []
-    for i, (name, amount) in enumerate(person_amounts):
-        final_amount = amount + other_charges * weights[i]
-        final_amounts.append((name, final_amount))
-
-    return {
-        "subtotal": total,
-        "grand_total": total + other_charges,
-        "final_amounts": final_amounts,
-        "is_equal_split": False,
-    }
+    return calculate_split_from_items(item_prices, allocations, all_people, other_charges)
