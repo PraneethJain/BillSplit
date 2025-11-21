@@ -102,17 +102,15 @@ class BillSplitterApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Horizontal(id="main-container"):
-            # LEFT: People
+        with Vertical(id="main-container"):
+            # TOP: People
             with Vertical(id="left-pane-content"):
-                yield Label("People:", classes="section-title")
                 with VerticalScroll(id="people_list"):
                     pass # People will be added here
                 yield Button("Add Person", id="add_person", variant='primary')
 
-            # RIGHT: Items
+            # BOTTOM: Items
             with Vertical(id="right-pane"):
-                yield Label("Bill Items:", classes="section-title")
                 yield ListView(id="item-list")
                 with Horizontal(id="input-row"):
                     yield Input(placeholder="Item Name", id="input-name")

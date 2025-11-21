@@ -11,21 +11,21 @@ Screen {
 #main-container {
     width: 100%;
     height: 100%;
-    layout: horizontal;
+    layout: vertical;
 }
 
-/* --- Left Pane (People) --- */
+/* --- Top Pane (People) --- */
 #left-pane {
-    width: 50%;
-    height: 100%;
-    border-right: solid green;
+    width: 100%;
+    height: 50%;
+    border-bottom: solid green;
     padding: 1;
 }
 
-/* --- Right Pane (Items) --- */
+/* --- Bottom Pane (Items) --- */
 #right-pane {
-    width: 50%;
-    height: 100%;
+    width: 100%;
+    height: 50%;
 }
 
 /* --- List Styling --- */
@@ -74,18 +74,26 @@ BillItemRow {
     height: 3;
     layout: horizontal;
     background: $surface;
+    padding: 0 1;
+}
+
+#input-name, #input-price {
+    height: 100%;
+    border: round #666;
+    content-align: center middle;
 }
 
 #input-name {
     width: 3fr;
-    height: 100%;
-    border: none;
+    margin-right: 1;
 }
+
 #input-price {
     width: 1fr;
-    height: 100%;
-    border: none;
-    border-left: solid $secondary;
+}
+
+#input-name:focus, #input-price:focus {
+    border: round $accent;
 }
 
 #btn-create {
@@ -93,9 +101,9 @@ BillItemRow {
     min-width: 5;
     height: 100%;
     border: none;
-    border-left: solid $secondary;
     background: $accent;
     color: white;
+    margin-left: 1;
 }
 
 /* --- Person Control Styling --- */
