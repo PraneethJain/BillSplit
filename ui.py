@@ -114,7 +114,7 @@ class BillSplitterApp(App):
                 yield ListView(id="item-list")
                 with Horizontal(id="input-row"):
                     yield Input(placeholder="Item Name", id="input-name")
-                    yield Input(placeholder="Cost", id="input-price", validators=[Number(minimum=0.0)])
+                    yield Input(placeholder="$$", id="input-price", validators=[Number(minimum=0.0)])
                     yield Button("+", id="btn-create")
         
         # Bottom Bar
